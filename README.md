@@ -70,7 +70,7 @@ default, and `make remove-signing-cert` deletes the identity again.
 Why this works: signed with an identity, the designated requirement codesign writes is
 
 ```
-identifier "com.igzo.dyntile" and certificate leaf = H"bc2a59…"
+identifier "com.igzo.dyntile" and certificate leaf = H"<your certificate's hash>"
 ```
 
 which does not change when the binary does. Ad-hoc signing instead produces
