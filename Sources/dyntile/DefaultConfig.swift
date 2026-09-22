@@ -32,7 +32,8 @@ default-layout = tall
 # ---------------------------------------------------------------- behaviour
 focus-follows-mouse = false
 mouse-follows-focus = false
-mouse-drag          = swap   # swap | off — what dragging a tiled window does
+mouse-drag          = swap   # swap | off  — drop a window on a tile to swap the two
+mouse-resize        = ratio  # ratio | off — drag a window's edge to move that split
 verbose             = false
 
 # ---------------------------------------------------------------- floating

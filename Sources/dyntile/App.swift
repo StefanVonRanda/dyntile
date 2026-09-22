@@ -96,7 +96,7 @@ enum Main {
     """
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var config: Config
     private let wm: WindowManager
     private let engine: Engine
@@ -104,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var server: IPC.Server?
     private var statusItem: NSStatusItem?
     private var configWatcher: DispatchSourceFileSystemObject?
+    private var mouseDownMonitor: Any?
     private var mouseUpMonitor: Any?
     private var mouseMoveMonitor: Any?
     private var reconcileTimer: Timer?
@@ -119,16 +120,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard AX.isTrusted(prompt: true) else {
             Log.error("""
-                accessibility permission is required.
-                Grant it in System Settings > Privacy & Security > Accessibility, then run dyntile again.
+                waiting for accessibility permission.
+                Grant it in System Settings > Privacy & Security > Accessibility, and dyntile
+                will start on its own — no need to relaunch. If dyntile is already listed,
+                the grant is stale after a rebuild: remove the entry with (-) and add it again.
                 """)
-            // The prompt is modal-free; give the user time to grant it, then re-check.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                if AX.isTrusted(prompt: false) { self?.boot() } else { NSApp.terminate(nil) }
-            }
+            waitForAccessibility(until: Date().addingTimeInterval(120))
             return
         }
         boot()
+    }
+
+    /// The permission prompt is not modal, and the grant does not reach a running process
+    /// as a notification, so poll for it rather than making the user launch dyntile twice.
+    private func waitForAccessibility(until deadline: Date) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            if AX.isTrusted(prompt: false) {
+                Log.info("accessibility granted")
+                self.boot()
+            } else if Date() < deadline {
+                self.waitForAccessibility(until: deadline)
+            } else {
+                Log.error("gave up waiting for accessibility permission")
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     private func boot() {
@@ -174,6 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Safety net: accessibility notifications are lossy, so reconcile periodically.
         reconcileTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             self?.wm.refresh(reason: "periodic")
+            self?.engine.flushDeferredRetile()
         }
 
         Log.info("dyntile running — config \(config.path ?? "(defaults)"), "
@@ -208,9 +226,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func installMouseMonitors() {
+        if let mouseDownMonitor { NSEvent.removeMonitor(mouseDownMonitor) }
         if let mouseUpMonitor { NSEvent.removeMonitor(mouseUpMonitor) }
         if let mouseMoveMonitor { NSEvent.removeMonitor(mouseMoveMonitor); self.mouseMoveMonitor = nil }
 
+        // Down and up are watched as a pair: tiling is frozen for the whole time the
+        // button is held, so a drag never has the layout pulling against it.
+        mouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) {
+            [weak self] _ in
+            self?.engine.mouseDidGoDown()
+        }
         mouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] _ in
             guard let self else { return }
             let point = AX.flip(CGRect(origin: NSEvent.mouseLocation, size: .zero)).origin
@@ -277,8 +302,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "▦"
         let menu = NSMenu()
+        menu.delegate = self
+        let state = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        state.isEnabled = false
+        menu.addItem(state)
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Retile", action: #selector(menuRetile), keyEquivalent: "")
         menu.addItem(withTitle: "Pause tiling", action: #selector(menuToggle), keyEquivalent: "")
         menu.addItem(withTitle: "Reload config", action: #selector(menuReload), keyEquivalent: "")
@@ -291,9 +320,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusItem() {
-        statusItem?.button?.title = engine.tilingEnabled ? "▦" : "▧"
-        statusItem?.menu?.item(at: 1)?.title = engine.tilingEnabled ? "Pause tiling" : "Resume tiling"
+        statusItem?.button?.image = StatusIcon.image(paused: !engine.tilingEnabled)
+        statusItem?.button?.toolTip = engine.tilingEnabled ? "dyntile" : "dyntile (paused)"
+        let toggleTitle = engine.tilingEnabled ? "Pause tiling" : "Resume tiling"
+        for existing in ["Pause tiling", "Resume tiling"] {
+            statusItem?.menu?.item(withTitle: existing)?.title = toggleTitle
+        }
+        statusItem?.menu?.item(at: 0)?.title = engine.tilingEnabled
+            ? "Layout: \(engine.currentLayoutName)"
+            : "Tiling paused"
     }
+
+    /// The layout can change from a hotkey, so refresh the title as the menu opens.
+    func menuWillOpen(_ menu: NSMenu) { updateStatusItem() }
 
     @objc private func menuRetile() { engine.run(.retile) }
     @objc private func menuToggle() { engine.run(.tilingToggle); updateStatusItem() }

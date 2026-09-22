@@ -31,6 +31,14 @@ final class Engine {
     private var lastFocused: [SpaceKey: WindowID] = [:]
     private(set) var tilingEnabled = true
     private var pendingRetile: DispatchWorkItem?
+    /// The frames dyntile last computed, i.e. the tile geometry. Drop targets are
+    /// hit-tested against this rather than against live window frames, which move
+    /// around under the cursor mid-drag.
+    private var lastFrames: [WindowID: CGRect] = [:]
+    /// True from mouse-down to mouse-up. Nothing is retiled while it is set: a layout
+    /// pass during a drag is what makes the window fight the cursor.
+    private var mouseDown = false
+    private var retileDeferredByDrag = false
 
     init(wm: WindowManager, config: Config) {
         self.wm = wm
@@ -98,15 +106,39 @@ final class Engine {
 
     // MARK: - Tiling
 
+    /// Menu tracking and app switches can swallow the mouse-up that would have ended a
+    /// drag. Rather than trust the event stream, confirm against the hardware state, so
+    /// a missed event can never leave tiling frozen.
+    private func syncMouseState() {
+        if mouseDown && NSEvent.pressedMouseButtons & 1 == 0 { mouseDown = false }
+    }
+
+    /// Called from the reconcile timer: catches a drag whose mouse-up never arrived.
+    func flushDeferredRetile() {
+        syncMouseState()
+        guard !mouseDown, retileDeferredByDrag else { return }
+        retileDeferredByDrag = false
+        retile()
+    }
+
     func scheduleRetile(reason: String) {
+        syncMouseState()
+        guard !mouseDown else {
+            // Hands off until the button comes up; handleDragEnd does the single pass.
+            retileDeferredByDrag = true
+            return
+        }
         pendingRetile?.cancel()
         let work = DispatchWorkItem { [weak self] in
             Log.debug("retile: \(reason)")
             self?.retile()
         }
         pendingRetile = work
-        // Coalesce bursts (an app opening five windows at launch) into one pass.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+        // Coalesce bursts (an app opening five windows at launch) into one pass. A window
+        // being dragged by something other than the mouse — a trackpad three-finger drag,
+        // an assistive device — never raises mouseDown, so give those longer to settle.
+        let delay = reason == "window moved by user" ? 0.35 : 0.05
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     func retile() {
@@ -137,12 +169,19 @@ final class Engine {
             }
         }
 
+        lastFrames = frames
         wm.apply(frames)
         if let focused = wm.focused, let space = currentSpace(), space.windows.contains(focused.id) {
             lastFocused[space.key] = focused.id
             // Monocle hides everything behind the focused window; keep it on top.
             if state(space.key).layout == .monocle { focused.element.raise() }
         }
+    }
+
+    /// The layout of the desktop the user is looking at, for the menu bar item.
+    var currentLayoutName: String {
+        guard let space = currentSpace() else { return "—" }
+        return state(space.key).layout.rawValue
     }
 
     func noteFocusChange() {
@@ -430,28 +469,88 @@ final class Engine {
 
     // MARK: - Mouse drag
 
-    /// Called on left-mouse-up. If the user dragged a tiled window, swap it with
-    /// whatever tiled window is under the cursor; otherwise just snap the layout back.
+    func mouseDidGoDown() {
+        mouseDown = true
+        retileDeferredByDrag = false
+    }
+
+    /// Called on left-mouse-up. A drag that changed the window's *size* becomes a split
+    /// ratio; a drag that changed its *position* swaps it with the tile it was dropped
+    /// on. Anything else just releases the layout pass that was held during the drag.
     func handleDragEnd(at point: CGPoint) {
-        guard tilingEnabled, config.mouseDrag == .swap else { retile(); return }
-        guard let dragged = wm.takeUserMovedWindow(), let space = currentSpace(),
-              space.windows.contains(dragged) else { retile(); return }
-        if let target = topWindow(at: point, among: space.windows, excluding: dragged) {
-            swap(dragged, target, in: space, state: state(space.key))
-        } else {
+        guard mouseDown else { return }   // not our drag: a stray up, or one already handled
+        mouseDown = false
+        let deferred = retileDeferredByDrag
+        retileDeferredByDrag = false
+
+        guard tilingEnabled else { return }
+        guard let dragged = wm.takeUserMovedWindow() else {
+            if deferred { retile() }
+            return
+        }
+        guard let space = currentSpace(), space.windows.contains(dragged),
+              let before = lastFrames[dragged], let window = wm.windows[dragged] else {
             retile()
+            return
+        }
+
+        let after = window.frame
+        let resized = abs(after.width - before.width) > 4 || abs(after.height - before.height) > 4
+
+        if resized {
+            guard config.mouseResize else { retile(); return }
+            applyManualResize(dragged, from: before, to: after, space: space, state: state(space.key))
+        } else if config.mouseDrag == .swap,
+                  let target = tile(at: point, among: space.windows, excluding: dragged) {
+            swap(dragged, target, in: space, state: state(space.key))
+            return
+        }
+        retile()
+    }
+
+    /// Fold a hand-resized window back into the layout's own parameters.
+    private func applyManualResize(_ id: WindowID, from old: CGRect, to new: CGRect,
+                                   space: (key: SpaceKey, display: Display, windows: [WindowID]),
+                                   state st: SpaceState) {
+        let inner = st.gapsEnabled ? config.innerGap : 0
+        let outer = st.gapsEnabled ? config.outerGap : 0
+        let work = space.display.visibleFrame.insetBy(dx: outer, dy: outer)
+
+        switch st.layout {
+        case .bsp:
+            st.tree.applyManualResize(id, from: old, to: new, gap: inner)
+
+        case .tall, .wide:
+            // Only the boundary between the main area and the stack is adjustable here.
+            let inMain = space.windows.prefix(st.mainCount).contains(id)
+            let vertical = st.layout == .tall
+            let boundary: CGFloat = inMain
+                ? (vertical ? new.maxX : new.maxY)
+                : (vertical ? new.minX : new.minY) - inner
+            st.mainRatio = Layout.ratio(forBoundary: boundary, work: work,
+                                        gap: inner, vertical: vertical)
+
+        default:
+            break   // equal splits have no ratio to carry the change
         }
     }
 
-    private func topWindow(at point: CGPoint, among candidates: [WindowID],
-                           excluding: WindowID) -> WindowID? {
-        let allowed = Set(candidates).subtracting([excluding])
-        for id in allowed {
-            guard let frame = wm.windows[id]?.frame else { continue }
-            if frame.contains(point) { return id }
+    /// The tile under a point. Uses the geometry of the last layout pass, so the window
+    /// being dragged does not shadow the tile it is hovering over.
+    private func tile(at point: CGPoint, among candidates: [WindowID],
+                      excluding: WindowID) -> WindowID? {
+        var best: (id: WindowID, area: CGFloat)?
+        for id in candidates where id != excluding {
+            guard let frame = lastFrames[id] ?? wm.windows[id]?.frame, frame.contains(point) else {
+                continue
+            }
+            // Overlapping tiles only happen in monocle; prefer the smallest, which is
+            // the most specific target.
+            if best == nil || frame.area < best!.area { best = (id, frame.area) }
         }
-        return nil
+        return best?.id
     }
+
 }
 
 extension CGRect {

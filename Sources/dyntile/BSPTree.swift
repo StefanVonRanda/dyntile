@@ -115,6 +115,57 @@ final class BSPTree {
         parent.vertical.toggle()
     }
 
+    /// Which edge of a leaf a user grabbed.
+    enum Edge { case left, right, top, bottom }
+
+    /// The ancestor split whose boundary *is* the given edge of this leaf.
+    ///
+    /// A leaf's right edge is the boundary of the nearest vertical ancestor that the leaf
+    /// sits on the left of; if the leaf is on the right of every vertical ancestor, its
+    /// right edge is the edge of the screen and nothing owns it.
+    private func splitOwning(_ leaf: Node, edge: Edge) -> Node? {
+        var current = leaf
+        while let parent = current.parent, let (first, _) = parent.children {
+            let isFirst = first === current
+            switch edge {
+            case .right:  if parent.vertical && isFirst { return parent }
+            case .left:   if parent.vertical && !isFirst { return parent }
+            case .bottom: if !parent.vertical && isFirst { return parent }
+            case .top:    if !parent.vertical && !isFirst { return parent }
+            }
+            current = parent
+        }
+        return nil
+    }
+
+    /// Translate a window the user resized by hand into split ratios, so the layout keeps
+    /// the size they chose instead of snapping back. Each edge that actually moved is
+    /// pushed onto whichever ancestor split owns it.
+    func applyManualResize(_ window: WindowID, from old: CGRect, to new: CGRect, gap: CGFloat) {
+        guard let leaf = self.leaf(for: window) else { return }
+        let tolerance: CGFloat = 4
+
+        func place(_ node: Node, boundary: CGFloat, vertical: Bool) {
+            let span = (vertical ? node.lastFrame.width : node.lastFrame.height) - gap
+            guard span > 1 else { return }
+            let origin = vertical ? node.lastFrame.minX : node.lastFrame.minY
+            node.ratio = min(max((boundary - origin) / span, 0.1), 0.9)
+        }
+
+        if abs(new.maxX - old.maxX) > tolerance, let owner = splitOwning(leaf, edge: .right) {
+            place(owner, boundary: new.maxX, vertical: true)
+        }
+        if abs(new.minX - old.minX) > tolerance, let owner = splitOwning(leaf, edge: .left) {
+            place(owner, boundary: new.minX - gap, vertical: true)
+        }
+        if abs(new.maxY - old.maxY) > tolerance, let owner = splitOwning(leaf, edge: .bottom) {
+            place(owner, boundary: new.maxY, vertical: false)
+        }
+        if abs(new.minY - old.minY) > tolerance, let owner = splitOwning(leaf, edge: .top) {
+            place(owner, boundary: new.minY - gap, vertical: false)
+        }
+    }
+
     func frames(in area: CGRect, params: LayoutParams) -> [WindowID: CGRect] {
         var out: [WindowID: CGRect] = [:]
         guard let root else { return out }

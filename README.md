@@ -34,9 +34,13 @@ make install          # builds dyntile.app, installs to /Applications, symlinks 
 open /Applications/dyntile.app
 ```
 
-Then grant **System Settings → Privacy & Security → Accessibility → dyntile**, and launch
-it again. Accessibility is the only permission it needs — the hotkeys use Carbon's
+Then grant **System Settings → Privacy & Security → Accessibility → dyntile**. dyntile
+waits for the grant and starts on its own, so there is no need to launch it twice.
+Accessibility is the only permission it needs — the hotkeys use Carbon's
 `RegisterEventHotKey`, not an event tap, so Input Monitoring is never requested.
+
+dyntile lives in the menu bar, not the Dock. Its icon shows the current layout at a
+glance and dims when tiling is paused; the menu has retile, pause, reload and quit.
 
 The first `make install` writes `~/.config/dyntile/dyntile.conf` if you don't have one;
 it never overwrites an existing config.
@@ -51,6 +55,13 @@ codesigning certificate in Keychain Access and build with:
 
 ```sh
 make install SIGN_ID="dyntile-local"
+```
+
+After any rebuild with ad-hoc signing, the old Accessibility entry is stale and macOS
+will not match it. Clear it and accept the prompt again:
+
+```sh
+make reset-permission && open /Applications/dyntile.app
 ```
 
 ## Configuration
@@ -69,7 +80,8 @@ default-layout = tall
 
 focus-follows-mouse = false
 mouse-follows-focus = false
-mouse-drag          = swap     # dragging a tiled window swaps it with the one you drop it on
+mouse-drag          = swap     # drop a window on a tile to swap the two
+mouse-resize        = ratio    # drag a window's edge to move that split
 
 float-app   = com.apple.systempreferences
 float-title = ^Picture[- ]in[- ]Picture$
@@ -126,6 +138,14 @@ alt-shift-←/→            move window to previous/next display
 alt-shift-;              reload config
 ```
 
+## The icon
+
+`Tools/MakeIcon.swift` draws the app icon — the `tall` layout itself — with Core Graphics
+and hands the iconset to `iconutil`, so it is generated from source rather than checked in
+as a binary. `make icon` rebuilds it; `make bundle` does so automatically. Every size is
+drawn from scratch instead of downscaled, and below 32pt the plate grows into the margin
+so the three tiles stay legible at 16pt.
+
 ## Scripting
 
 A running dyntile listens on `/tmp/dyntile-$UID.sock`:
@@ -166,6 +186,22 @@ panels are left where the app put them. `dyntile msg query` lists what it is man
 - Accessibility events are lossy, so a 3-second reconcile pass catches anything missed.
 - Apps that snap to size increments — terminals, mostly — will not land exactly on their
   tile. dyntile records where they actually landed rather than fighting them.
+- Tiling is frozen for as long as the left mouse button is held. A layout pass in the
+  middle of a drag is what makes a tiler feel like it is fighting the cursor, so there
+  is exactly one pass, on mouse-up.
+
+## Using the mouse
+
+Dragging a tiled window and dropping it on another **swaps the two** (`mouse-drag = off`
+turns this off and snaps it back instead).
+
+Dragging a window's **edge** moves the split it sits on, and the window keeps the size you
+dropped it at: in `bsp` each edge you moved is pushed onto whichever ancestor split owns
+it, and in `tall`/`wide` it becomes the main ratio. `mouse-resize = off` snaps back
+instead. Equal-split layouts (`columns`, `rows`, `grid`) have no ratio to carry the
+change, so they always snap back.
+
+Nothing is retiled while the button is down, so neither gesture fights the cursor.
 
 ## Limits
 

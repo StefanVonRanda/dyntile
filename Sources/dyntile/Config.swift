@@ -14,6 +14,8 @@ struct Config {
     var mouseFollowsFocus = false
     /// What a mouse drag of a tiled window does on release.
     var mouseDrag: MouseDrag = .swap
+    /// Whether resizing a tiled window by its edge adjusts the split it sits on.
+    var mouseResize = true
     var verbose = false
     var floatBundleIDs: [String] = []
     var floatTitlePatterns: [NSRegularExpression] = []
@@ -111,6 +113,12 @@ struct Config {
         case "focus-follows-mouse": focusFollowsMouse = try flag()
         case "mouse-follows-focus": mouseFollowsFocus = try flag()
         case "verbose": verbose = try flag()
+        case "mouse-resize":
+            switch value.lowercased() {
+            case "ratio", "true", "yes", "on", "1": mouseResize = true
+            case "off", "false", "no", "0": mouseResize = false
+            default: throw ConfigError("'mouse-resize' expects ratio|off, got '\(value)'")
+            }
         case "mouse-drag":
             guard let m = MouseDrag(rawValue: value.lowercased()) else {
                 throw ConfigError("'mouse-drag' expects swap|off, got '\(value)'")

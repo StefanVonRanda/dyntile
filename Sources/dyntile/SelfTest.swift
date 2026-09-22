@@ -11,6 +11,7 @@ enum SelfTest {
     static func run() -> Int32 {
         layoutTests()
         bspTests()
+        dragTests()
         configTests()
         keyTests()
         commandTests()
@@ -194,6 +195,93 @@ enum SelfTest {
         tree.reconcile(with: [7], focused: nil, area: area, params: params())
         check(tree.frames(in: area, params: params())[7]!.equalTo(work),
               "a lone bsp window should fill the work area")
+    }
+
+    // MARK: - Resizing by hand
+
+    /// A window dragged by its edge must end up exactly where it was dropped, not
+    /// snapped back and not approximately right.
+    private static func dragTests() {
+        let work = area.insetBy(dx: 20, dy: 20)
+        let gap: CGFloat = 10
+
+        func twoUp() -> BSPTree {
+            let tree = BSPTree()
+            tree.reconcile(with: [1, 2], focused: nil, area: area, params: params())
+            _ = tree.frames(in: area, params: params())
+            return tree
+        }
+
+        // Dragging the main window's right edge outward.
+        var tree = twoUp()
+        var before = tree.frames(in: area, params: params())[1]!
+        var dropped = CGRect(x: before.minX, y: before.minY,
+                             width: 1080, height: before.height)   // right edge to x=1100
+        tree.applyManualResize(1, from: before, to: dropped, gap: gap)
+        var after = tree.frames(in: area, params: params())
+        near(after[1]!.maxX, dropped.maxX, 1.5, "right-edge drag should land where dropped")
+        near(after[2]!.minX, dropped.maxX + gap, 1.5, "the neighbour should close the gap")
+        disjoint(Array(after.values), within: work, "drag/right-edge")
+
+        // Dragging the *stack* window's left edge moves the same boundary.
+        tree = twoUp()
+        before = tree.frames(in: area, params: params())[2]!
+        dropped = CGRect(x: 905, y: before.minY, width: before.maxX - 905, height: before.height)
+        tree.applyManualResize(2, from: before, to: dropped, gap: gap)
+        after = tree.frames(in: area, params: params())
+        near(after[2]!.minX, 905, 1.5, "left-edge drag should land where dropped")
+        near(after[1]!.maxX, 905 - gap, 1.5, "the main window should follow the boundary")
+
+        // A vertical drag on a tree with no horizontal split must change nothing.
+        tree = twoUp()
+        before = tree.frames(in: area, params: params())[1]!
+        let heights = tree.frames(in: area, params: params()).mapValues(\.height)
+        tree.applyManualResize(1, from: before,
+                               to: CGRect(x: before.minX, y: before.minY,
+                                          width: before.width, height: before.height - 200),
+                               gap: gap)
+        after = tree.frames(in: area, params: params())
+        check(after.allSatisfy { heights[$0.key] == $0.value.height },
+              "a vertical drag with no horizontal split should be ignored")
+
+        // Deeper trees: the edge belongs to the ancestor that actually owns it.
+        let deep = BSPTree()
+        deep.reconcile(with: [1, 2, 3], focused: 2, area: area, params: params())
+        var frames = deep.frames(in: area, params: params())
+        let two = frames[2]!
+        deep.applyManualResize(2, from: two,
+                               to: CGRect(x: two.minX, y: two.minY,
+                                          width: two.width, height: two.height - 150), gap: gap)
+        frames = deep.frames(in: area, params: params())
+        near(frames[2]!.maxY, two.maxY - 150, 1.5, "nested bottom-edge drag")
+        near(frames[3]!.minY, two.maxY - 150 + gap, 1.5, "nested neighbour should follow")
+        disjoint(Array(frames.values), within: work, "drag/nested")
+
+        // Dragging a window almost off the screen must not collapse its neighbour.
+        tree = twoUp()
+        before = tree.frames(in: area, params: params())[1]!
+        tree.applyManualResize(1, from: before,
+                               to: CGRect(x: before.minX, y: before.minY,
+                                          width: 5, height: before.height), gap: gap)
+        after = tree.frames(in: area, params: params())
+        check(after.values.allSatisfy { $0.width > 100 }, "ratio clamp let a tile collapse: \(after)")
+
+        // The same mapping for the main/stack boundary of the stacking layouts.
+        near(Layout.ratio(forBoundary: work.minX + 0.75 * (work.width - gap), work: work,
+                          gap: gap, vertical: true), 0.75, 0.001, "main ratio from a boundary")
+        near(Layout.ratio(forBoundary: work.minY + 0.4 * (work.height - gap), work: work,
+                          gap: gap, vertical: false), 0.4, 0.001, "wide ratio from a boundary")
+        near(Layout.ratio(forBoundary: work.minX - 5000, work: work, gap: gap, vertical: true),
+             0.1, 0.001, "main ratio clamps low")
+        near(Layout.ratio(forBoundary: work.maxX + 5000, work: work, gap: gap, vertical: true),
+             0.9, 0.001, "main ratio clamps high")
+
+        // Round-trip: a tall layout resized by hand reproduces the dropped edge.
+        let boundary = work.minX + 900
+        let ratio = Layout.ratio(forBoundary: boundary, work: work, gap: gap, vertical: true)
+        let tall = Layout.frames(kind: .tall, count: 3, area: area,
+                                 params: params(ratio: ratio, inner: gap))
+        near(tall[0].maxX, boundary, 1.5, "tall should reproduce the hand-dragged boundary")
     }
 
     // MARK: - Config

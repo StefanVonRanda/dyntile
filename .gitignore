@@ -2,3 +2,5 @@
 dyntile.app/
 *.xcodeproj
 .DS_Store
+Resources/dyntile.icns
+*.iconset/

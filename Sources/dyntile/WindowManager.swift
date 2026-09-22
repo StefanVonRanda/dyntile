@@ -219,12 +219,20 @@ final class WindowManager {
             }
         }
 
-        for id in windows.keys where !seen.contains(id) {
+        let vanished = windows.keys.filter { !seen.contains($0) }
+        for id in vanished {
             if let pid = windows[id]?.pid { forget(id, in: pid) }
         }
 
+        // The periodic sweep exists only to catch notifications the accessibility API
+        // dropped. If it found nothing new, do not wake the layout engine.
+        let changed = !vanished.isEmpty || windows.count != countBeforeRefresh
+        countBeforeRefresh = windows.count
+        guard reason != "periodic" || changed else { return }
         onChange?(reason)
     }
+
+    private var countBeforeRefresh = 0
 
     private func forget(_ id: WindowID, in pid: pid_t) {
         watchers[pid]?.unwatch(id: id)
@@ -295,8 +303,15 @@ final class WindowManager {
             guard let window = windows[id] else { continue }
             let target = CGRect(x: rect.origin.x.rounded(), y: rect.origin.y.rounded(),
                                 width: rect.width.rounded(), height: rect.height.rounded())
-            if let current = window.element.frame, current.equalTo(target) { continue }
-            window.element.setFrame(target)
+            let current = window.element.frame
+            if let current, current.equalTo(target) { continue }
+            // Every AX write is a synchronous round trip to the owning app, so send only
+            // the ones that are actually needed.
+            if let current, current.size.equalTo(target.size) {
+                window.element.setPosition(target.origin)
+            } else {
+                window.element.setFrame(target)
+            }
             // Record what the window actually settled on: apps with size increments
             // (terminals especially) will not land exactly on the requested frame.
             suppressedFrames[id] = window.element.frame ?? target

@@ -72,6 +72,16 @@ enum Layout {
         }
     }
 
+    /// The main ratio that puts the main/stack boundary at `boundary`.
+    /// Used when the user resizes a tile by hand and the layout has to keep that size.
+    static func ratio(forBoundary boundary: CGFloat, work: CGRect,
+                      gap: CGFloat, vertical: Bool) -> CGFloat {
+        let span = (vertical ? work.width : work.height) - gap
+        guard span > 1 else { return 0.5 }
+        let origin = vertical ? work.minX : work.minY
+        return min(max((boundary - origin) / span, 0.1), 0.9)
+    }
+
     /// Cut `rect` in two along `ratio`, leaving `gap` between the halves.
     static func cut(_ rect: CGRect, ratio: CGFloat, gap: CGFloat, vertical: Bool) -> (CGRect, CGRect) {
         if vertical {
