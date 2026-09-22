@@ -178,6 +178,17 @@ final class Engine {
         }
     }
 
+    /// Set the layout of the desktop the user is looking at. Unlike the `layout <name>`
+    /// command this never toggles back, because picking the checked item in a menu
+    /// should be a no-op rather than a switch to something else.
+    @discardableResult
+    func setLayout(_ kind: LayoutKind) -> String {
+        guard let space = currentSpace() else { return "error: no display" }
+        state(space.key).layout = kind
+        retile()
+        return kind.rawValue
+    }
+
     /// The layout of the desktop the user is looking at, for the menu bar item.
     var currentLayoutName: String {
         guard let space = currentSpace() else { return "—" }

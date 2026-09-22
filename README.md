@@ -39,8 +39,11 @@ waits for the grant and starts on its own, so there is no need to launch it twic
 Accessibility is the only permission it needs — the hotkeys use Carbon's
 `RegisterEventHotKey`, not an event tap, so Input Monitoring is never requested.
 
-dyntile lives in the menu bar, not the Dock. Its icon shows the current layout at a
-glance and dims when tiling is paused; the menu has retile, pause, reload and quit.
+dyntile lives in the menu bar, not the Dock. Its icon dims when tiling is paused, and its
+menu carries a **Layout** submenu listing every layout with the current one checked — all
+of them, not just the ones in your `layouts` cycle, since the cycle only governs what the
+hotkey steps through. The rest of the menu is retile, float the focused window, pause,
+reload and quit.
 
 The first `make install` writes `~/.config/dyntile/dyntile.conf` if you don't have one;
 it never overwrites an existing config.
@@ -49,16 +52,25 @@ To start it at login: System Settings → General → Login Items → add `dynti
 
 ### Codesigning
 
-The bundle is ad-hoc signed by default, which means macOS treats each rebuild as a new
-app and drops the Accessibility grant. To keep it across rebuilds, make a self-signed
-codesigning certificate in Keychain Access and build with:
+The bundle is ad-hoc signed by default, which means macOS treats each rebuild as a new app
+and drops the Accessibility grant. Fix that once with a self-signed identity:
 
 ```sh
+make signing-cert                        # creates "dyntile-local" in your login keychain
 make install SIGN_ID="dyntile-local"
 ```
 
-After any rebuild with ad-hoc signing, the old Accessibility entry is stale and macOS
-will not match it. Clear it and accept the prompt again:
+`make signing-cert` generates a code signing certificate with `openssl`, imports it into
+your **login** keychain and marks it trusted for code signing. macOS asks you to authorise
+the trust setting, and `codesign` asks once for access to the key — choose *Always Allow*.
+Nothing is installed system-wide and nothing needs `sudo`. Put `SIGN_ID=dyntile-local` in
+your shell environment to make it the default.
+
+`SIGN_ID` only *selects* an identity; if the named one does not exist the build stops and
+tells you so rather than producing an unsigned bundle.
+
+If you do stay on ad-hoc signing, each rebuild leaves a stale Accessibility entry that
+macOS will not match. Clear it and accept the prompt again:
 
 ```sh
 make reset-permission && open /Applications/dyntile.app
@@ -162,6 +174,7 @@ Handy if you'd rather keep your hotkeys in skhd or Karabiner: bind them to
 ## Troubleshooting
 
 ```sh
+dyntile msg 'layout bsp'   # or use the Layout submenu in the menu bar
 dyntile --check       # validate the config
 dyntile --dry-run     # log the layout it would apply, without moving anything
 dyntile -v            # verbose event log

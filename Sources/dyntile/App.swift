@@ -103,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotkeys: Hotkeys!
     private var server: IPC.Server?
     private var statusItem: NSStatusItem?
+    private var layoutMenuItem: NSMenuItem?
     private var configWatcher: DispatchSourceFileSystemObject?
     private var mouseDownMonitor: Any?
     private var mouseUpMonitor: Any?
@@ -304,16 +305,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         menu.delegate = self
-        let state = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        state.isEnabled = false
-        menu.addItem(state)
+        // Enabled state is set explicitly in updateStatusItem; automatic validation would
+        // override it and leave the layout item enabled while tiling is paused.
+        menu.autoenablesItems = false
+
+        // Every layout is offered, not just the ones in the `layouts` cycle: the cycle is
+        // about what the hotkey steps through, not about what you are allowed to pick.
+        let layoutItem = NSMenuItem(title: "Layout", action: nil, keyEquivalent: "")
+        let layoutMenu = NSMenu()
+        for kind in LayoutKind.allCases {
+            let entry = NSMenuItem(title: kind.rawValue.capitalized,
+                                   action: #selector(menuSetLayout(_:)), keyEquivalent: "")
+            entry.representedObject = kind.rawValue
+            entry.target = self
+            layoutMenu.addItem(entry)
+        }
+        layoutItem.submenu = layoutMenu
+        menu.addItem(layoutItem)
+        self.layoutMenuItem = layoutItem
+
         menu.addItem(.separator())
         menu.addItem(withTitle: "Retile", action: #selector(menuRetile), keyEquivalent: "")
+        menu.addItem(withTitle: "Float focused window", action: #selector(menuFloat),
+                     keyEquivalent: "")
         menu.addItem(withTitle: "Pause tiling", action: #selector(menuToggle), keyEquivalent: "")
         menu.addItem(withTitle: "Reload config", action: #selector(menuReload), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit dyntile", action: #selector(menuQuit), keyEquivalent: "q")
-        for entry in menu.items { entry.target = self }
+        for entry in menu.items where entry.submenu == nil { entry.target = self }
         item.menu = menu
         statusItem = item
         updateStatusItem()
@@ -326,10 +345,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for existing in ["Pause tiling", "Resume tiling"] {
             statusItem?.menu?.item(withTitle: existing)?.title = toggleTitle
         }
-        statusItem?.menu?.item(at: 0)?.title = engine.tilingEnabled
-            ? "Layout: \(engine.currentLayoutName)"
-            : "Tiling paused"
+
+        // Still selectable while paused: the choice simply takes effect on resume.
+        let current = engine.currentLayoutName
+        layoutMenuItem?.title = engine.tilingEnabled
+            ? "Layout: \(current)"
+            : "Layout: \(current) (paused)"
+        for entry in layoutMenuItem?.submenu?.items ?? [] {
+            entry.state = (entry.representedObject as? String) == current ? .on : .off
+        }
     }
+
+    @objc private func menuSetLayout(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String,
+              let kind = LayoutKind(rawValue: name) else { return }
+        engine.setLayout(kind)
+        updateStatusItem()
+    }
+
+    @objc private func menuFloat() { engine.run(.floatToggle) }
 
     /// The layout can change from a hotkey, so refresh the title as the menu opens.
     func menuWillOpen(_ menu: NSMenu) { updateStatusItem() }
