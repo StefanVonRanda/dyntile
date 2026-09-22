@@ -123,7 +123,8 @@ final class Engine {
                 outerGap: st.gapsEnabled ? config.outerGap : 0)
 
             if st.layout == .bsp {
-                st.tree.reconcile(with: windows, focused: lastFocused[key])
+                st.tree.reconcile(with: windows, focused: lastFocused[key],
+                                  area: display.visibleFrame, params: params)
                 for (id, rect) in st.tree.frames(in: display.visibleFrame, params: params) {
                     frames[id] = rect
                 }

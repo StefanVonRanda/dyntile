@@ -45,13 +45,19 @@ final class BSPTree {
     }
 
     /// Bring the tree in line with `desired`, splitting at `focused` for new windows.
-    func reconcile(with desired: [WindowID], focused: WindowID?) {
+    ///
+    /// The layout area is needed here, not just in `frames`: a leaf picks its split axis
+    /// from its own rectangle, so that rectangle has to be up to date *before* the
+    /// insertion. Recomputing per insertion is cheap — a space holds a handful of windows.
+    func reconcile(with desired: [WindowID], focused: WindowID?,
+                   area: CGRect, params: LayoutParams) {
         let wanted = Set(desired)
         for existing in windows where !wanted.contains(existing) {
             remove(existing)
         }
         let present = Set(windows)
         for window in desired where !present.contains(window) {
+            _ = frames(in: area, params: params)
             insert(window, near: focused)
         }
     }

@@ -124,7 +124,7 @@ enum SelfTest {
 
     private static func bspTests() {
         let tree = BSPTree()
-        tree.reconcile(with: [1, 2, 3, 4], focused: nil)
+        tree.reconcile(with: [1, 2, 3, 4], focused: nil, area: area, params: params())
         check(Set(tree.windows) == Set([1, 2, 3, 4]), "bsp holds \(tree.windows)")
 
         let work = area.insetBy(dx: 20, dy: 20)
@@ -133,13 +133,13 @@ enum SelfTest {
         disjoint(Array(frames.values), within: work, "bsp/4")
 
         // Removing a window frees its space for its sibling; the rest keep their shape.
-        tree.reconcile(with: [1, 2, 4], focused: 2)
+        tree.reconcile(with: [1, 2, 4], focused: 2, area: area, params: params())
         frames = tree.frames(in: area, params: params())
         check(frames.count == 3 && frames[3] == nil, "bsp kept a removed window")
         disjoint(Array(frames.values), within: work, "bsp/3")
 
         // Insertion splits the focused leaf, so the new window lands beside it.
-        tree.reconcile(with: [1, 2, 4, 9], focused: 1)
+        tree.reconcile(with: [1, 2, 4, 9], focused: 1, area: area, params: params())
         frames = tree.frames(in: area, params: params())
         check(frames[9] != nil, "bsp dropped the inserted window")
         let one = frames[1]!, nine = frames[9]!
@@ -167,10 +167,31 @@ enum SelfTest {
         check(clamped.values.allSatisfy { $0.width > 1 && $0.height > 1 },
               "resize clamping let a window collapse")
 
+        // Splits follow the shape of the leaf being split, from the very first window:
+        // a wide area splits into columns, and each of those splits into rows.
+        let axis = BSPTree()
+        axis.reconcile(with: [1, 2], focused: nil, area: area, params: params())
+        var two = axis.frames(in: area, params: params())
+        check(two[1]!.width < work.width * 0.6 && two[1]!.height > work.height * 0.9,
+              "a wide area should split into columns, got \(two[1]!)")
+        axis.reconcile(with: [1, 2, 3], focused: 2, area: area, params: params())
+        let three = axis.frames(in: area, params: params())
+        check(three[2]!.height < work.height * 0.6 && three[3]!.height < work.height * 0.6,
+              "a tall column should split into rows, got \(three[2]!) / \(three[3]!)")
+        disjoint(Array(three.values), within: work, "bsp/axis")
+
+        // The same holds the other way round on a portrait display.
+        let portrait = CGRect(x: 0, y: 0, width: 1000, height: 1600)
+        let tallTree = BSPTree()
+        tallTree.reconcile(with: [1, 2], focused: nil, area: portrait, params: params())
+        two = tallTree.frames(in: portrait, params: params())
+        check(two[1]!.height < portrait.height * 0.6 && two[1]!.width > portrait.width * 0.9,
+              "a tall area should split into rows, got \(two[1]!)")
+
         // Emptying and refilling must not leave stale nodes behind.
-        tree.reconcile(with: [], focused: nil)
+        tree.reconcile(with: [], focused: nil, area: area, params: params())
         check(tree.windows.isEmpty, "bsp left \(tree.windows) after emptying")
-        tree.reconcile(with: [7], focused: nil)
+        tree.reconcile(with: [7], focused: nil, area: area, params: params())
         check(tree.frames(in: area, params: params())[7]!.equalTo(work),
               "a lone bsp window should fill the work area")
     }
