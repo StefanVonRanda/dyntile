@@ -1,0 +1,4 @@
+.build/
+dyntile.app/
+*.xcodeproj
+.DS_Store
