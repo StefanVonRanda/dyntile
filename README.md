@@ -60,14 +60,25 @@ make signing-cert                        # creates "dyntile-local" in your login
 make install SIGN_ID="dyntile-local"
 ```
 
-`make signing-cert` generates a code signing certificate with `openssl`, imports it into
-your **login** keychain and marks it trusted for code signing. macOS asks you to authorise
-the trust setting, and `codesign` asks once for access to the key — choose *Always Allow*.
-Nothing is installed system-wide and nothing needs `sudo`. Put `SIGN_ID=dyntile-local` in
-your shell environment to make it the default.
+`make signing-cert` generates a code signing certificate with `openssl` and imports it
+into your **login** keychain. Nothing is installed system-wide, nothing needs `sudo`, and
+the certificate is deliberately *not* added to the trust store — `codesign` does not need
+that, so there is no authorisation dialog. `codesign` asks once for access to the key;
+choose *Always Allow*. Put `SIGN_ID=dyntile-local` in your environment to make it the
+default, and `make remove-signing-cert` deletes the identity again.
+
+Why this works: signed with an identity, the designated requirement codesign writes is
+
+```
+identifier "com.igzo.dyntile" and certificate leaf = H"bc2a59…"
+```
+
+which does not change when the binary does. Ad-hoc signing instead produces
+`cdhash H"…"`, derived from the binary's contents, so every rebuild is a different app as
+far as TCC is concerned and the Accessibility grant stops matching.
 
 `SIGN_ID` only *selects* an identity; if the named one does not exist the build stops and
-tells you so rather than producing an unsigned bundle.
+tells you so rather than producing a differently-signed bundle.
 
 If you do stay on ad-hoc signing, each rebuild leaves a stale Accessibility entry that
 macOS will not match. Clear it and accept the prompt again:

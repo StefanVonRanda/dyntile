@@ -10,7 +10,7 @@ SIGN_ID    ?= -
 CERT_CN    ?= dyntile-local
 KEYCHAIN   ?= $(HOME)/Library/Keychains/login.keychain-db
 
-.PHONY: icon build release signing-cert release-universal test bundle install install-config uninstall run clean check reset-permission
+.PHONY: icon build release signing-cert remove-signing-cert release-universal test bundle install install-config uninstall run clean check reset-permission
 
 build:
 	swift build
@@ -42,8 +42,7 @@ bundle: release icon
 	cp Resources/dyntile.icns $(APP)/Contents/Resources/dyntile.icns
 	sed 's/@VERSION@/$(shell git describe --tags --always 2>/dev/null || echo dev)/' \
 		Resources/Info.plist > $(APP)/Contents/Info.plist
-	@if [ "$(SIGN_ID)" != "-" ] && \
-	    ! security find-identity -v -p codesigning | grep -qF '$(SIGN_ID)'; then \
+	@if [ "$(SIGN_ID)" != "-" ] && ! security find-identity | grep -qF '$(SIGN_ID)'; then \
 		echo; \
 		echo "error: no codesigning identity named '$(SIGN_ID)' in your keychain."; \
 		echo "  SIGN_ID selects an identity, it does not create one."; \
@@ -72,27 +71,41 @@ install-config:
 		echo "wrote $(CONFIG)"; \
 	fi
 
-# A self-signed code signing identity, so the app keeps one identity across rebuilds and
-# macOS keeps honouring its Accessibility grant. Everything stays in your login keychain;
-# macOS will ask you to authorise the trust setting, and codesign will ask once for
-# access to the key (choose "Always Allow").
+# A self-signed code signing identity, so the app keeps ONE identity across rebuilds and
+# macOS keeps honouring its Accessibility grant. The designated requirement codesign then
+# writes is "certificate leaf = H\"...\"" rather than a cdhash, which is what survives a
+# rebuild. The certificate is never marked as trusted: codesign does not need that, and
+# not touching the trust store means no authorisation dialog.
+#
+# The key is imported as a traditional PKCS#1 PEM, not a PKCS#12 bundle: OpenSSL 3 writes
+# PKCS#12 with an AES/PBKDF2 MAC that Apple's Security framework cannot read, which fails
+# as "MAC verification failed during PKCS12 import (wrong password?)".
 signing-cert:
-	@if security find-identity -v -p codesigning | grep -qF '$(CERT_CN)'; then \
+	@if security find-identity | grep -qF '$(CERT_CN)'; then \
 		echo "identity '$(CERT_CN)' already exists — build with SIGN_ID=\"$(CERT_CN)\""; \
 		exit 0; \
 	fi
-	@tmp=$$(mktemp -d) && \
+	@set -e; tmp=$$(mktemp -d); trap 'rm -rf $$tmp' EXIT; \
 	openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
 		-keyout $$tmp/key.pem -out $$tmp/cert.pem -subj "/CN=$(CERT_CN)" \
 		-addext "basicConstraints=critical,CA:false" \
 		-addext "keyUsage=critical,digitalSignature" \
-		-addext "extendedKeyUsage=critical,codeSigning" 2>/dev/null && \
-	openssl pkcs12 -export -inkey $$tmp/key.pem -in $$tmp/cert.pem \
-		-name "$(CERT_CN)" -out $$tmp/id.p12 -passout pass: && \
-	security import $$tmp/id.p12 -k "$(KEYCHAIN)" -P "" -T /usr/bin/codesign && \
-	security add-trusted-cert -r trustRoot -p codeSign -k "$(KEYCHAIN)" $$tmp/cert.pem && \
-	rm -rf $$tmp && \
-	echo && echo "created '$(CERT_CN)'. now run: make install SIGN_ID=\"$(CERT_CN)\""
+		-addext "extendedKeyUsage=critical,codeSigning" 2>/dev/null; \
+	openssl rsa -in $$tmp/key.pem -traditional -out $$tmp/rsa.pem 2>/dev/null \
+		|| openssl rsa -in $$tmp/key.pem -out $$tmp/rsa.pem 2>/dev/null; \
+	if ! grep -q "BEGIN RSA PRIVATE KEY" $$tmp/rsa.pem; then \
+		echo "error: could not write a PKCS#1 key that macOS can import"; exit 1; \
+	fi; \
+	security import $$tmp/rsa.pem -k "$(KEYCHAIN)" -f openssl -t priv -T /usr/bin/codesign; \
+	security import $$tmp/cert.pem -k "$(KEYCHAIN)" -f openssl -t cert -T /usr/bin/codesign; \
+	echo; \
+	echo "created '$(CERT_CN)' in $(KEYCHAIN)"; \
+	echo "now run: make install SIGN_ID=\"$(CERT_CN)\""; \
+	echo "codesign will ask once for access to the key — choose \"Always Allow\"."
+
+# Remove the identity created by signing-cert.
+remove-signing-cert:
+	security delete-identity -c "$(CERT_CN)" "$(KEYCHAIN)"
 
 # An ad-hoc signature changes on every rebuild, which leaves a stale Accessibility
 # entry that macOS will not match. This clears it so the prompt comes back clean.
