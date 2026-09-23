@@ -1,7 +1,7 @@
 import Foundation
 
-/// dyntile's config is a flat, line-oriented file: `key = value`, `bind <keys> = <command>`,
-/// `#` comments. No sections, no TOML dependency, and every error names its line number.
+/// dyntile's config is a flat, line-oriented file: `key = value` and `#` comments.
+/// No sections, no TOML dependency, and every error names its line number.
 struct Config {
     var innerGap: CGFloat = 8
     var outerGap: CGFloat = 8
@@ -19,7 +19,9 @@ struct Config {
     var verbose = false
     var floatBundleIDs: [String] = []
     var floatTitlePatterns: [NSRegularExpression] = []
-    var binds: [(spec: String, commands: [Command])] = []
+    /// `bind` lines left over from when dyntile had hotkeys. They are skipped rather than
+    /// rejected, so an old config still loads.
+    var ignoredBinds = 0
     var path: String?
 
     enum MouseDrag: String { case swap, off }
@@ -43,10 +45,8 @@ struct Config {
         var config = Config()
         config.path = path
         guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
-            config.binds = defaultBinds()
             return config
         }
-        var sawBind = false
 
         for (index, rawLine) in text.components(separatedBy: .newlines).enumerated() {
             let lineNo = index + 1
@@ -63,16 +63,7 @@ struct Config {
 
             do {
                 if key.lowercased().hasPrefix("bind ") {
-                    let spec = String(key.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-                    _ = try Keycodes.parse(spec)  // fail fast on a bad key name
-                    let commands = try value.components(separatedBy: ";")
-                        .map { $0.trimmingCharacters(in: .whitespaces) }
-                        .filter { !$0.isEmpty }
-                        .map(Command.parse)
-                    guard !commands.isEmpty else { throw ConfigError("binding has no command") }
-                    config.binds.removeAll { $0.spec.lowercased() == spec.lowercased() }
-                    config.binds.append((spec, commands))
-                    sawBind = true
+                    config.ignoredBinds += 1
                 } else {
                     try config.set(key: key.lowercased().replacingOccurrences(of: ".", with: "-"),
                                    value: value)
@@ -82,7 +73,6 @@ struct Config {
             }
         }
 
-        if !sawBind { config.binds = defaultBinds() }
         if !config.layouts.contains(config.defaultLayout) {
             config.defaultLayout = config.layouts.first ?? .tall
         }
@@ -151,30 +141,6 @@ struct Config {
             floatTitlePatterns.append(re)
         default:
             throw ConfigError("unknown setting '\(key)'")
-        }
-    }
-
-    /// Mirrors AeroSpace's default hjkl bindings, minus anything workspace-related.
-    static func defaultBinds() -> [(spec: String, commands: [Command])] {
-        let table: [(String, String)] = [
-            ("alt-h", "focus left"), ("alt-j", "focus down"),
-            ("alt-k", "focus up"), ("alt-l", "focus right"),
-            ("alt-shift-h", "move left"), ("alt-shift-j", "move down"),
-            ("alt-shift-k", "move up"), ("alt-shift-l", "move right"),
-            ("alt-minus", "resize shrink"), ("alt-equal", "resize grow"),
-            ("alt-slash", "layout next"), ("alt-comma", "layout prev"),
-            ("alt-m", "layout monocle"), ("alt-f", "float toggle"),
-            ("alt-enter", "move main"),
-            ("alt-shift-comma", "main dec"), ("alt-shift-period", "main inc"),
-            ("alt-tab", "focus next"), ("alt-shift-tab", "focus prev"),
-            ("alt-shift-semicolon", "reload"),
-            ("alt-shift-space", "tiling toggle"),
-            ("alt-shift-left", "display move prev"), ("alt-shift-right", "display move next"),
-            ("alt-ctrl-left", "display focus prev"), ("alt-ctrl-right", "display focus next"),
-        ]
-        return table.compactMap { spec, command in
-            guard let parsed = try? Command.parse(command) else { return nil }
-            return (spec, [parsed])
         }
     }
 }

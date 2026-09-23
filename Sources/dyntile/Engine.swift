@@ -15,6 +15,9 @@ final class SpaceState {
     var mainRatio: CGFloat
     var mainCount: Int
     var gapsEnabled = true
+    /// Hand-dragged tile sizes for `columns`, `rows` and `grid`, kept per layout so
+    /// switching away and back restores them.
+    var weights: [LayoutKind: SplitWeights] = [:]
     let tree = BSPTree()
 
     init(config: Config) {
@@ -152,7 +155,8 @@ final class Engine {
                 mainRatio: st.mainRatio,
                 mainCount: st.mainCount,
                 innerGap: st.gapsEnabled ? config.innerGap : 0,
-                outerGap: st.gapsEnabled ? config.outerGap : 0)
+                outerGap: st.gapsEnabled ? config.outerGap : 0,
+                weights: st.weights[st.layout] ?? SplitWeights())
 
             if st.layout == .bsp {
                 st.tree.reconcile(with: windows, focused: lastFocused[key],
@@ -289,10 +293,18 @@ final class Engine {
 
         case .resize(let grow):
             let delta = grow ? config.resizeStep : -config.resizeStep
-            if st.layout == .bsp {
+            switch st.layout {
+            case .bsp:
                 guard let focused else { return "error: no focused window" }
                 st.tree.resize(focused.id, by: delta)
-            } else {
+            case .columns, .rows, .grid:
+                guard let focused, let index = space.windows.firstIndex(of: focused.id) else {
+                    return "error: no focused window"
+                }
+                st.weights[st.layout] = Layout.growTile(
+                    kind: st.layout, count: space.windows.count, index: index, by: delta,
+                    weights: st.weights[st.layout] ?? SplitWeights())
+            default:
                 // Growing a stack window means shrinking the main area.
                 let inMain = focused.map { space.windows.prefix(st.mainCount).contains($0.id) } ?? true
                 st.mainRatio = min(max(st.mainRatio + (inMain ? delta : -delta), 0.1), 0.9)
@@ -541,8 +553,14 @@ final class Engine {
             st.mainRatio = Layout.ratio(forBoundary: boundary, work: work,
                                         gap: inner, vertical: vertical)
 
+        case .columns, .rows, .grid:
+            guard let index = space.windows.firstIndex(of: id) else { break }
+            st.weights[st.layout] = Layout.resizeTile(
+                kind: st.layout, count: space.windows.count, index: index, from: old, to: new,
+                work: work, gap: inner, weights: st.weights[st.layout] ?? SplitWeights())
+
         default:
-            break   // equal splits have no ratio to carry the change
+            break   // monocle and float have no split to move
         }
     }
 

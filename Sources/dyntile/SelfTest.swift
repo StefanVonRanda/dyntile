@@ -13,7 +13,6 @@ enum SelfTest {
         bspTests()
         dragTests()
         configTests()
-        keyTests()
         commandTests()
 
         if failures.isEmpty {
@@ -282,6 +281,99 @@ enum SelfTest {
         let tall = Layout.frames(kind: .tall, count: 3, area: area,
                                  params: params(ratio: ratio, inner: gap))
         near(tall[0].maxX, boundary, 1.5, "tall should reproduce the hand-dragged boundary")
+
+        splitDragTests(work: work, gap: gap)
+    }
+
+    /// `columns`, `rows` and `grid` keep a hand-dragged edge the same way.
+    private static func splitDragTests(work: CGRect, gap: CGFloat) {
+        func layout(_ kind: LayoutKind, _ count: Int, _ weights: SplitWeights) -> [CGRect] {
+            var p = params(inner: gap)
+            p.weights = weights
+            return Layout.frames(kind: kind, count: count, area: area, params: p)
+        }
+        func drag(_ kind: LayoutKind, _ count: Int, _ index: Int, _ weights: SplitWeights = .init(),
+                  _ reshape: (CGRect) -> CGRect) -> (before: [CGRect], after: [CGRect], SplitWeights) {
+            let before = layout(kind, count, weights)
+            let fresh = Layout.resizeTile(kind: kind, count: count, index: index, from: before[index],
+                                          to: reshape(before[index]), work: work, gap: gap,
+                                          weights: weights)
+            return (before, layout(kind, count, fresh), fresh)
+        }
+
+        // Unset weights reproduce the old equal split exactly.
+        let equal = Layout.frames(kind: .columns, count: 3, area: area, params: params(inner: gap))
+        check(equal == Layout.split(work, into: 3, gap: gap, vertical: true),
+              "unweighted columns should be an equal split")
+
+        // Middle column, right edge out to x=1100: only it and its right neighbour change.
+        var (before, after, weights) = drag(.columns, 3, 1) { r in
+            CGRect(x: r.minX, y: r.minY, width: 1100 - r.minX, height: r.height)
+        }
+        near(after[1].maxX, 1100, 1.5, "columns right-edge drag should land where dropped")
+        near(after[2].minX, 1100 + gap, 1.5, "the right neighbour should close the gap")
+        check(after[0] == before[0], "a column not touching the edge moved: \(before[0]) -> \(after[0])")
+        near(after[2].maxX, work.maxX, 1, "the last column should still end at the edge")
+        disjoint(after, within: work, "columns/drag")
+
+        // Its left edge moves the boundary on the other side.
+        (before, after, weights) = drag(.columns, 3, 1, weights) { r in
+            CGRect(x: 400, y: r.minY, width: r.maxX - 400, height: r.height)
+        }
+        near(after[1].minX, 400, 1.5, "columns left-edge drag should land where dropped")
+        near(after[0].maxX, 400 - gap, 1.5, "the left neighbour should follow")
+        near(after[1].maxX, 1100, 1.5, "the earlier drag should survive")
+
+        // Opening a window keeps the dragged sizes in proportion instead of resetting them.
+        let four = layout(.columns, 4, weights)
+        check(four[1].width > four[0].width, "a new window reset the columns: \(four)")
+        disjoint(four, within: work, "columns/grown")
+
+        // A drag against the screen edge has no neighbour to push, so nothing changes.
+        (before, after, _) = drag(.columns, 3, 0) { r in
+            CGRect(x: r.minX + 50, y: r.minY, width: r.width - 50, height: r.height)
+        }
+        check(after == before, "an outer edge drag should snap back")
+
+        // Rows are the same thing on the other axis.
+        (_, after, _) = drag(.rows, 3, 0) { r in
+            CGRect(x: r.minX, y: r.minY, width: r.width, height: 450 - r.minY)
+        }
+        near(after[0].maxY, 450, 1.5, "rows bottom-edge drag should land where dropped")
+        near(after[1].minY, 450 + gap, 1.5, "the row below should close the gap")
+        disjoint(after, within: work, "rows/drag")
+
+        // Grid: a corner drag moves the column boundary and the row boundary together,
+        // and the other column's rows stay as they were.
+        (before, after, _) = drag(.grid, 4, 0) { r in
+            CGRect(x: r.minX, y: r.minY, width: 1000 - r.minX, height: 300 - r.minY)
+        }
+        near(after[0].maxX, 1000, 1.5, "grid right edge")
+        near(after[0].maxY, 300, 1.5, "grid bottom edge")
+        near(after[1].minY, 300 + gap, 1.5, "the tile below should follow")
+        near(after[2].minX, 1000 + gap, 1.5, "the next column should follow")
+        near(after[2].height, before[2].height, 1, "the other column's rows should not move")
+        disjoint(after, within: work, "grid/drag")
+
+        // Dragging a tile nearly shut is clamped, as tall's ratio is.
+        (_, after, _) = drag(.columns, 2, 0) { r in
+            CGRect(x: r.minX, y: r.minY, width: 5, height: r.height)
+        }
+        check(after.allSatisfy { $0.width > 100 }, "columns clamp let a tile collapse: \(after)")
+
+        // The resize command grows the focused tile on every axis it can.
+        let grown = layout(.grid, 4, Layout.growTile(kind: .grid, count: 4, index: 3, by: 0.1,
+                                                      weights: .init()))
+        let plain = layout(.grid, 4, .init())
+        check(grown[3].width > plain[3].width + 50 && grown[3].height > plain[3].height + 50,
+              "resize grow should enlarge the grid tile: \(plain[3]) -> \(grown[3])")
+        disjoint(grown, within: work, "grid/grow")
+        var shrunk = SplitWeights()
+        for _ in 0..<50 {
+            shrunk = Layout.growTile(kind: .rows, count: 3, index: 1, by: -0.1, weights: shrunk)
+        }
+        check(layout(.rows, 3, shrunk).allSatisfy { $0.height > 10 },
+              "repeated shrinks should clamp, not collapse the row")
     }
 
     // MARK: - Config
@@ -318,8 +410,7 @@ enum SelfTest {
             check(config.innerGap == 4 && config.outerGap == 12, "gaps parsed as \(config.innerGap)/\(config.outerGap)")
             check(config.mainRatio == 0.7, "main-ratio parsed as \(config.mainRatio)")
             check(config.layouts == [.bsp, .monocle], "layouts parsed as \(config.layouts)")
-            check(config.binds.count == 2, "expected 2 binds, got \(config.binds.count)")
-            check(config.binds.last?.commands == [.reload, .retile], "chained commands not parsed")
+            check(config.ignoredBinds == 2, "expected 2 ignored binds, got \(config.ignoredBinds)")
             check(config.shouldFloat(bundleID: "com.apple.SystemPreferences", title: ""),
                   "float-app should match case-insensitively")
             check(config.shouldFloat(bundleID: "x", title: "Picture in Picture"),
@@ -327,10 +418,10 @@ enum SelfTest {
             check(!config.shouldFloat(bundleID: "x", title: "Notes"), "float-title over-matched")
         }
 
-        // A config with no binds at all keeps the built-in keymap.
-        withTempConfig("gaps = 0\n") { path in
+        // Leftover binds from an old config load, even ones that never parsed.
+        withTempConfig("bind alt-nope = teleport left\ngaps = 0\n") { path in
             let config = try Config.load(path: path)
-            check(!config.binds.isEmpty, "default binds should survive a config with no binds")
+            check(config.ignoredBinds == 1 && config.innerGap == 0, "old bind line broke the config")
         }
 
         // Errors must name the offending line.
@@ -342,54 +433,17 @@ enum SelfTest {
                 check(error.description.contains(":2:"), "error should cite line 2: \(error.description)")
             }
         }
-        withTempConfig("bind alt-nope = focus left\n") { path in
-            do {
-                _ = try Config.load(path: path)
-                check(false, "unknown key was accepted")
-            } catch let error as ConfigError {
-                check(error.description.contains("unknown key"), "wrong error: \(error.description)")
-            }
-        }
-        withTempConfig("bind alt-h = teleport left\n") { path in
-            do {
-                _ = try Config.load(path: path)
-                check(false, "unknown command was accepted")
-            } catch let error as ConfigError {
-                check(error.description.contains("unknown command"), "wrong error: \(error.description)")
-            }
-        }
-
         // A missing file is not an error: the defaults are a working setup.
         do {
             let config = try Config.load(path: "/nonexistent/dyntile.conf")
-            check(!config.binds.isEmpty, "missing config should fall back to default binds")
+            check(config.layouts == Config().layouts, "missing config should yield the defaults")
         } catch {
             check(false, "missing config threw \(error)")
         }
 
-        // Every default binding must parse as a real key combination.
-        for bind in Config.defaultBinds() {
-            check((try? Keycodes.parse(bind.spec)) != nil, "default bind '\(bind.spec)' does not parse")
-        }
-        // ...and no two defaults may claim the same combination.
-        let specs = Config.defaultBinds().compactMap { try? Keycodes.parse($0.spec) }
-            .map { "\($0.mods)-\($0.keyCode)" }
-        check(Set(specs).count == specs.count, "default binds contain a duplicate combination")
     }
 
-    // MARK: - Keys and commands
-
-    private static func keyTests() {
-        guard let parsed = try? Keycodes.parse("alt-shift-h") else {
-            check(false, "alt-shift-h did not parse"); return
-        }
-        check(parsed.keyCode == 4, "h should be keycode 4, got \(parsed.keyCode)")
-        check(parsed.mods == UInt32(2048 | 512), "alt-shift mask wrong: \(parsed.mods)")
-        check((try? Keycodes.parse("CMD+Alt+K")) != nil, "separators and case should be flexible")
-        check((try? Keycodes.parse("alt-kc:36"))?.keyCode == 36, "raw keycode escape hatch broken")
-        check((try? Keycodes.parse("hyper-x")) == nil, "unknown modifier should fail")
-        check((try? Keycodes.parse("")) == nil, "empty spec should fail")
-    }
+    // MARK: - Commands
 
     private static func commandTests() {
         let cases: [(String, Command)] = [

@@ -68,8 +68,11 @@ enum Main {
         Log.verbose = verbose || config.verbose
 
         if checkOnly {
-            print("\(configPath): ok — \(config.binds.count) bindings, layouts: "
+            print("\(configPath): ok — layouts: "
                   + config.layouts.map(\.rawValue).joined(separator: ", "))
+            if config.ignoredBinds > 0 {
+                print("note: \(config.ignoredBinds) 'bind' lines ignored — dyntile has no hotkeys")
+            }
             exit(0)
         }
 
@@ -100,7 +103,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var config: Config
     private let wm: WindowManager
     private let engine: Engine
-    private var hotkeys: Hotkeys!
     private var server: IPC.Server?
     private var statusItem: NSStatusItem?
     private var layoutMenuItem: NSMenuItem?
@@ -166,15 +168,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         engine.onConfigReload = { [weak self] fresh in self?.adopt(fresh) }
 
-        hotkeys = Hotkeys { [weak self] commands in
-            guard let self else { return }
-            for command in commands {
-                let result = self.engine.run(command)
-                if result.hasPrefix("error:") { Log.debug("\(command): \(result)") }
-            }
-        }
-        applyBindings()
-
         wm.start()
 
         let ws = NSWorkspace.shared.notificationCenter
@@ -196,23 +189,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         Log.info("dyntile running — config \(config.path ?? "(defaults)"), "
-                 + "\(config.binds.count) bindings, socket \(IPC.socketPath)")
+                 + "socket \(IPC.socketPath)")
+        noteIgnoredBinds()
     }
 
     private func adopt(_ fresh: Config) {
         config = fresh
         wm.config = fresh
         Log.verbose = fresh.verbose
-        applyBindings()
+        noteIgnoredBinds()
         installMouseMonitors()
         updateStatusItem()
     }
 
-    private func applyBindings() {
-        let failed = hotkeys.rebind(config.binds)
-        for spec in failed {
-            Log.error("could not register hotkey '\(spec)' — another app already owns it")
-        }
+    private func noteIgnoredBinds() {
+        guard config.ignoredBinds > 0 else { return }
+        Log.info("ignoring \(config.ignoredBinds) 'bind' lines in the config — dyntile has no hotkeys")
     }
 
     @objc private func spaceChanged() {
@@ -310,7 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.autoenablesItems = false
 
         // Every layout is offered, not just the ones in the `layouts` cycle: the cycle is
-        // about what the hotkey steps through, not about what you are allowed to pick.
+        // about what `layout next` steps through, not about what you are allowed to pick.
         let layoutItem = NSMenuItem(title: "Layout", action: nil, keyEquivalent: "")
         let layoutMenu = NSMenu()
         for kind in LayoutKind.allCases {
@@ -331,7 +323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(withTitle: "Pause tiling", action: #selector(menuToggle), keyEquivalent: "")
         menu.addItem(withTitle: "Reload config", action: #selector(menuReload), keyEquivalent: "")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit dyntile", action: #selector(menuQuit), keyEquivalent: "q")
+        menu.addItem(withTitle: "Quit dyntile", action: #selector(menuQuit), keyEquivalent: "")
         for entry in menu.items where entry.submenu == nil { entry.target = self }
         item.menu = menu
         statusItem = item
@@ -365,7 +357,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func menuFloat() { engine.run(.floatToggle) }
 
-    /// The layout can change from a hotkey, so refresh the title as the menu opens.
+    /// The layout can change over IPC, so refresh the title as the menu opens.
     func menuWillOpen(_ menu: NSMenu) { updateStatusItem() }
 
     @objc private func menuRetile() { engine.run(.retile) }
@@ -375,6 +367,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         server?.stop()
-        hotkeys?.unregisterAll()
     }
 }

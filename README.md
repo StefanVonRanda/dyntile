@@ -36,13 +36,13 @@ open /Applications/dyntile.app
 
 Then grant **System Settings → Privacy & Security → Accessibility → dyntile**. dyntile
 waits for the grant and starts on its own, so there is no need to launch it twice.
-Accessibility is the only permission it needs — the hotkeys use Carbon's
-`RegisterEventHotKey`, not an event tap, so Input Monitoring is never requested.
+Accessibility is the only permission it needs. dyntile has no keyboard shortcuts, so
+Input Monitoring is never requested.
 
 dyntile lives in the menu bar, not the Dock. Its icon dims when tiling is paused, and its
 menu carries a **Layout** submenu listing every layout with the current one checked — all
-of them, not just the ones in your `layouts` cycle, since the cycle only governs what the
-hotkey steps through. The rest of the menu is retile, float the focused window, pause,
+of them, not just the ones in your `layouts` cycle, since the cycle only governs what
+`layout next` steps through. The rest of the menu is retile, float the focused window, pause,
 reload and quit.
 
 The first `make install` writes `~/.config/dyntile/dyntile.conf` if you don't have one;
@@ -108,23 +108,15 @@ mouse-resize        = ratio    # drag a window's edge to move that split
 
 float-app   = com.apple.systempreferences
 float-title = ^Picture[- ]in[- ]Picture$
-
-bind alt-h = focus left
-bind alt-shift-l = move right
-bind alt-slash = layout next
-bind alt-shift-enter = exec open -na Ghostty; retile
 ```
 
-Modifiers are `cmd`, `alt`, `ctrl`, `shift`; key names follow AeroSpace's vocabulary
-(`h`, `1`, `f5`, `minus`, `equal`, `slash`, `comma`, `leftSquareBracket`, `space`,
-`enter`, `esc`, `tab`, `left`/`right`/`up`/`down`, `keypad3`, …), and `kc:36` takes a raw
-virtual keycode. Several commands can share one key, separated by `;`.
-
-**Defining any `bind` replaces the entire default keymap**, so copy the lines you want to
-keep. `dyntile --check` validates a config without running anything, and every error
-names its file and line.
+`dyntile --check` validates a config without running anything, and every error names its
+file and line. dyntile has no keyboard shortcuts; `bind` lines left in an older config are
+ignored, and `--check` says how many.
 
 ### Commands
+
+Sent with `dyntile msg` (see [Scripting](#scripting)).
 
 | command | |
 | --- | --- |
@@ -139,27 +131,6 @@ names its file and line.
 | `display focus\|move next\|prev` | across physical displays |
 | `reload`, `retile`, `query`, `quit` | |
 | `exec <shell command>` | |
-
-### Default keymap
-
-Mirrors AeroSpace's defaults with the workspace bindings removed.
-
-```
-alt-h/j/k/l              focus left/down/up/right
-alt-shift-h/j/k/l        move  left/down/up/right
-alt-tab / alt-shift-tab  focus next / prev
-alt-enter                promote to main
-alt-minus / alt-equal    resize shrink / grow
-alt-slash / alt-comma    layout next / prev
-alt-m                    monocle (press again to go back)
-alt-shift-, / alt-shift-.  main dec / inc
-alt-f                    float toggle
-alt-g                    gaps toggle
-alt-shift-space          tiling toggle
-alt-ctrl-←/→             focus previous/next display
-alt-shift-←/→            move window to previous/next display
-alt-shift-;              reload config
-```
 
 ## The icon
 
@@ -179,8 +150,8 @@ dyntile msg 'focus right'
 dyntile msg query          # what dyntile sees right now, per desktop
 ```
 
-Handy if you'd rather keep your hotkeys in skhd or Karabiner: bind them to
-`dyntile msg <command>` and leave the config's `bind` lines out.
+dyntile has no hotkeys of its own. If you want some, bind them in skhd, Karabiner or
+Shortcuts to `dyntile msg <command>`.
 
 ## Troubleshooting
 
@@ -220,10 +191,17 @@ Dragging a tiled window and dropping it on another **swaps the two** (`mouse-dra
 turns this off and snaps it back instead).
 
 Dragging a window's **edge** moves the split it sits on, and the window keeps the size you
-dropped it at: in `bsp` each edge you moved is pushed onto whichever ancestor split owns
-it, and in `tall`/`wide` it becomes the main ratio. `mouse-resize = off` snaps back
-instead. Equal-split layouts (`columns`, `rows`, `grid`) have no ratio to carry the
-change, so they always snap back.
+dropped it at, in every layout that has splits:
+
+- `tall`/`wide`: the edge becomes the main ratio.
+- `columns`, `rows`, `grid`: the tile trades size with the neighbour on the side you
+  dragged, and nothing else moves. Sizes belong to the slot rather than the window, so a
+  swap keeps them in place, and a newly opened window gets an average share instead of
+  resetting the rest.
+- `bsp`: each edge you moved is pushed onto whichever ancestor split owns it.
+
+An edge against the side of the screen has no neighbour, so dragging it snaps back, as
+does any resize in `monocle`. `mouse-resize = off` snaps back everywhere.
 
 Nothing is retiled while the button is down, so neither gesture fights the cursor.
 
