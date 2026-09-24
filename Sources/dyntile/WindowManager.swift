@@ -219,7 +219,11 @@ final class WindowManager {
             }
         }
 
-        let vanished = windows.keys.filter { !seen.contains($0) }
+        // The accessibility tree only lists windows on the active Space. A window that
+        // merely left it still exists in the window server; forgetting it would re-add
+        // it at the end of `order` on return, shuffling the tiles.
+        let alive = windowIDs(onScreenOnly: false)
+        let vanished = windows.keys.filter { !seen.contains($0) && !alive.contains($0) }
         for id in vanished {
             if let pid = windows[id]?.pid { forget(id, in: pid) }
         }
@@ -247,9 +251,12 @@ final class WindowManager {
     /// Window IDs currently on screen, i.e. on the active Space of some display.
     /// This is what lets dyntile stay out of the Spaces business entirely: it tiles
     /// whatever macOS is already showing, and never moves a window between Spaces.
-    func onScreenIDs() -> Set<WindowID> {
-        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
-                                              kCGNullWindowID) as? [[String: Any]] ?? []
+    func onScreenIDs() -> Set<WindowID> { windowIDs(onScreenOnly: true) }
+
+    private func windowIDs(onScreenOnly: Bool) -> Set<WindowID> {
+        let options: CGWindowListOption = onScreenOnly
+            ? [.optionOnScreenOnly, .excludeDesktopElements] : [.optionAll, .excludeDesktopElements]
+        let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
         var out: Set<WindowID> = []
         for entry in info {
             guard let layer = entry[kCGWindowLayer as String] as? Int, layer == 0,
