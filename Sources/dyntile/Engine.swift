@@ -495,6 +495,10 @@ final class Engine {
     func mouseDidGoDown() {
         mouseDown = true
         retileDeferredByDrag = false
+        // Only a move made while this button is held is a drag. A stale one — an app
+        // nudging its own window, a terminal settling on its size increments — would
+        // otherwise turn the next plain click on another tile into a swap.
+        _ = wm.takeUserMovedWindow()
     }
 
     /// Called on left-mouse-up. A drag that changed the window's *size* becomes a split
