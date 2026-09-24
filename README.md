@@ -223,16 +223,38 @@ panels are left where the app put them. `dyntile msg query` lists what it is man
 - The current desktop is read from `CGWindowListCopyWindowInfo`'s on-screen list, which
   is exactly the set of windows macOS is showing — so dyntile is always in agreement with
   the system about what's visible.
-- Two private symbols are used, both resolved with `dlsym` and both with fallbacks:
-  `_AXUIElementGetWindow` (accessibility element → window id) and SkyLight's
-  `CGSCopyManagedDisplaySpaces` (which desktop is current on which display, so layouts can
-  be remembered per desktop). No SIP changes, no injection, no scripting additions.
+- It uses a few private macOS functions; see [Private APIs](#private-apis). No SIP
+  changes, no injection, no scripting additions.
 - Accessibility events are lossy, so a 3-second reconcile pass catches anything missed.
 - Apps that snap to size increments — terminals, mostly — will not land exactly on their
   tile. dyntile records where they actually landed rather than fighting them.
 - Tiling is frozen for as long as the left mouse button is held. A layout pass in the
   middle of a drag is what makes a tiler feel like it is fighting the cursor, so there
   is exactly one pass, on mouse-up.
+
+## Private APIs
+
+macOS has no public way to do two things a tiler needs, so dyntile calls private functions,
+as yabai, AeroSpace and Amethyst do:
+
+| function | what for | if a macOS update removes it |
+| --- | --- | --- |
+| `_AXUIElementGetWindow` (ApplicationServices) | matching an accessibility window to its window id | dyntile refuses to start and says so |
+| `CGSMainConnectionID`, `CGSCopyManagedDisplaySpaces` (SkyLight) | knowing which desktop is current on each display, so layouts are kept per desktop | layouts are kept per display instead |
+
+All of them are looked up with `dlsym` at runtime rather than linked, so a missing one is
+handled as above instead of crashing on launch. They are all in
+[`Sources/dyntile/PrivateAPI.swift`](Sources/dyntile/PrivateAPI.swift).
+
+What this means for you:
+
+- **A macOS update can break dyntile** until it is fixed here. These functions have been
+  stable for many years and every macOS tiler depends on the first one, but Apple makes
+  no promise about them.
+- **dyntile cannot be on the Mac App Store.** The store rejects private APIs, and its
+  sandbox does not allow moving other apps' windows anyway.
+- **No SIP changes are needed.** dyntile only *reads* from SkyLight. It never injects
+  into the Dock or WindowServer, which is what the yabai features that need SIP off do.
 
 ## Using the mouse
 
