@@ -71,7 +71,15 @@ enum Main {
             print("\(configPath): ok — layouts: "
                   + config.layouts.map(\.rawValue).joined(separator: ", "))
             if config.ignoredBinds > 0 {
-                print("note: \(config.ignoredBinds) 'bind' lines ignored — dyntile has no hotkeys")
+                print("note: \(config.ignoredBinds) 'bind' lines ignored — shortcuts live in shortcuts.conf")
+            }
+            let shortcutsPath = Shortcuts.path(besideConfig: configPath)
+            do {
+                let shortcuts = try Shortcuts.load(path: shortcutsPath)
+                print("\(shortcutsPath): ok — \(shortcuts.resolved.count) shortcuts on \(shortcuts.modifierName)")
+            } catch {
+                FileHandle.standardError.write("\(error)\n".data(using: .utf8)!)
+                exit(1)
             }
             exit(0)
         }
@@ -103,6 +111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var config: Config
     private let wm: WindowManager
     private let engine: Engine
+    private var hotkeys: Hotkeys!
+    private var shortcuts = Shortcuts()
+    private var shortcutsWindow: ShortcutsWindow?
     private var server: IPC.Server?
     private var statusItem: NSStatusItem?
     private var layoutMenuItem: NSMenuItem?
@@ -168,6 +179,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         engine.onConfigReload = { [weak self] fresh in self?.adopt(fresh) }
 
+        hotkeys = Hotkeys { [weak self] commands in
+            guard let self else { return }
+            for command in commands {
+                let result = self.engine.run(command)
+                if result.hasPrefix("error:") { Log.debug("\(command): \(result)") }
+            }
+            self.updateStatusItem()
+        }
+        loadShortcuts()
+
         wm.start()
 
         let ws = NSWorkspace.shared.notificationCenter
@@ -189,6 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         Log.info("dyntile running — config \(config.path ?? "(defaults)"), "
+                 + "\(shortcuts.resolved.count) shortcuts on \(shortcuts.modifierName), "
                  + "socket \(IPC.socketPath)")
         noteIgnoredBinds()
     }
@@ -198,13 +220,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         wm.config = fresh
         Log.verbose = fresh.verbose
         noteIgnoredBinds()
+        loadShortcuts()
         installMouseMonitors()
         updateStatusItem()
     }
 
     private func noteIgnoredBinds() {
         guard config.ignoredBinds > 0 else { return }
-        Log.info("ignoring \(config.ignoredBinds) 'bind' lines in the config — dyntile has no hotkeys")
+        Log.info("ignoring \(config.ignoredBinds) 'bind' lines in the config — "
+                 + "shortcuts live in shortcuts.conf and the Shortcuts window")
+    }
+
+    /// shortcuts.conf sits next to the config and is reread whenever the config is, so
+    /// the menu's reload and `dyntile msg reload` pick up a hand edit.
+    private func loadShortcuts() {
+        let path = Shortcuts.path(besideConfig: config.path ?? Config.defaultPath)
+        do {
+            shortcuts = try Shortcuts.load(path: path)
+        } catch {
+            Log.error("\(error) — keeping the previous shortcuts")
+        }
+        applyShortcuts()
+    }
+
+    private func applyShortcuts() {
+        let failed = hotkeys.rebind(shortcuts.resolved)
+        for name in failed {
+            Log.error("could not register the shortcut for '\(name)' — another app already owns it")
+        }
+        shortcutsWindow?.update(shortcuts, failed: failed)
     }
 
     @objc private func spaceChanged() {
@@ -322,6 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                      keyEquivalent: "")
         menu.addItem(withTitle: "Pause tiling", action: #selector(menuToggle), keyEquivalent: "")
         menu.addItem(withTitle: "Reload config", action: #selector(menuReload), keyEquivalent: "")
+        menu.addItem(withTitle: "Shortcuts…", action: #selector(menuShortcuts), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit dyntile", action: #selector(menuQuit), keyEquivalent: "")
         for entry in menu.items where entry.submenu == nil { entry.target = self }
@@ -357,7 +402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func menuFloat() { engine.run(.floatToggle) }
 
-    /// The layout can change over IPC, so refresh the title as the menu opens.
+    /// The layout can change over IPC or a shortcut, so refresh the title as the menu opens.
     func menuWillOpen(_ menu: NSMenu) { updateStatusItem() }
 
     @objc private func menuRetile() { engine.run(.retile) }
@@ -365,7 +410,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuReload() { Log.info(engine.run(.reload)) }
     @objc private func menuQuit() { NSApp.terminate(nil) }
 
+    @objc private func menuShortcuts() {
+        if shortcutsWindow == nil {
+            shortcutsWindow = ShortcutsWindow(
+                shortcuts: shortcuts,
+                onChange: { [weak self] edited in
+                    guard let self else { return }
+                    self.shortcuts = edited
+                    do { try edited.save() } catch { Log.error("could not save shortcuts: \(error)") }
+                    self.applyShortcuts()
+                },
+                onRecording: { [weak self] listening in
+                    guard let self else { return }
+                    if listening { self.hotkeys.unregisterAll() } else { self.applyShortcuts() }
+                })
+        }
+        shortcutsWindow?.show()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         server?.stop()
+        hotkeys?.unregisterAll()
     }
 }

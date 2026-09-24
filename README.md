@@ -36,14 +36,14 @@ open /Applications/dyntile.app
 
 Then grant **System Settings → Privacy & Security → Accessibility → dyntile**. dyntile
 waits for the grant and starts on its own, so there is no need to launch it twice.
-Accessibility is the only permission it needs. dyntile has no keyboard shortcuts, so
-Input Monitoring is never requested.
+Accessibility is the only permission it needs — the shortcuts use Carbon's
+`RegisterEventHotKey`, not an event tap, so Input Monitoring is never requested.
 
 dyntile lives in the menu bar, not the Dock. Its icon dims when tiling is paused, and its
 menu carries a **Layout** submenu listing every layout with the current one checked — all
 of them, not just the ones in your `layouts` cycle, since the cycle only governs what
 `layout next` steps through. The rest of the menu is retile, float the focused window, pause,
-reload and quit.
+reload, **Shortcuts…** and quit.
 
 The first `make install` writes `~/.config/dyntile/dyntile.conf` if you don't have one;
 it never overwrites an existing config.
@@ -111,12 +111,61 @@ float-title = ^Picture[- ]in[- ]Picture$
 ```
 
 `dyntile --check` validates a config without running anything, and every error names its
-file and line. dyntile has no keyboard shortcuts; `bind` lines left in an older config are
-ignored, and `--check` says how many.
+file and line. Shortcuts are not set here: `bind` lines left in an older config are ignored,
+and `--check` says how many. See [Shortcuts](#shortcuts).
+
+### Shortcuts
+
+Every command below has a row in **Shortcuts…** in the menu bar. Tick or untick a row to turn
+its shortcut on or off, click the shortcut and press new keys to rebind it (⌫ turns it off,
+⎋ cancels), and pick the modifier at the top. Changes apply and save at once. A shortcut
+another app already holds is shown in red.
+
+The modifier defaults to ⌥ (Option). Shortcuts written with it follow when you change it, so
+switching to ⌃⌥ moves the whole keymap in one go. Be aware that ⌥ plus a key types a
+character on Mac layouts: on Danish, German and other European layouts ⌥ gives `@ $ { } [ ] |`,
+and a shortcut on one of those keys takes the character away everywhere.
+
+The window writes `shortcuts.conf` next to `dyntile.conf`. It holds only what differs from the
+defaults, and is picked up by **Reload config** if you edit it by hand:
+
+```
+modifier = ctrl-alt                 # cmd, alt, ctrl, shift — what `mod` means
+focus left = mod-y                  # rebind
+float toggle = none                 # turn off
+exec open -na Ghostty = mod-shift-enter
+reload; retile = mod-r              # several commands on one key
+```
+
+Key names follow AeroSpace's vocabulary (`h`, `1`, `f5`, `minus`, `equal`, `slash`, `comma`,
+`leftSquareBracket`, `space`, `enter`, `esc`, `tab`, `left`/`right`/`up`/`down`, `keypad3`, …)
+and are physical key positions, so `slash` is the `-` key on a Danish keyboard; `kc:36` takes a
+raw virtual keycode. The window shows each key as your current layout labels it.
+
+Defaults (`mod` = ⌥):
+
+```
+mod-h/j/k/l              focus left/down/up/right
+mod-shift-h/j/k/l        move  left/down/up/right
+mod-tab / mod-shift-tab  focus next / prev
+mod-enter                promote to main
+mod-minus / mod-equal    resize shrink / grow
+mod-slash / mod-comma    layout next / prev
+mod-t / mod-b / mod-m    layout tall / bsp / monocle (press again to go back)
+mod-shift-, / mod-shift-.  main dec / inc
+mod-f                    float toggle
+mod-g                    gaps toggle
+mod-shift-space          tiling toggle
+mod-ctrl-←/→             focus previous/next display
+mod-shift-←/→            move window to previous/next display
+mod-shift-;              reload config
+```
+
+The other layouts, `gaps inc|dec` and `retile` have rows but no default keys.
 
 ### Commands
 
-Sent with `dyntile msg` (see [Scripting](#scripting)).
+Bound in [Shortcuts](#shortcuts), or sent with `dyntile msg` (see [Scripting](#scripting)).
 
 | command | |
 | --- | --- |
@@ -150,8 +199,8 @@ dyntile msg 'focus right'
 dyntile msg query          # what dyntile sees right now, per desktop
 ```
 
-dyntile has no hotkeys of its own. If you want some, bind them in skhd, Karabiner or
-Shortcuts to `dyntile msg <command>`.
+Handy if you'd rather keep your hotkeys in skhd or Karabiner: bind them to
+`dyntile msg <command>` and turn dyntile's own off in **Shortcuts…**.
 
 ## Troubleshooting
 

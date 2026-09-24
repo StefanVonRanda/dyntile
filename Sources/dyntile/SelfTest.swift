@@ -13,6 +13,8 @@ enum SelfTest {
         bspTests()
         dragTests()
         configTests()
+        keyTests()
+        shortcutTests()
         commandTests()
 
         if failures.isEmpty {
@@ -441,6 +443,94 @@ enum SelfTest {
             check(false, "missing config threw \(error)")
         }
 
+    }
+
+    // MARK: - Keys and shortcuts
+
+    private static func keyTests() {
+        guard let parsed = try? Keycodes.parse("alt-shift-h") else {
+            check(false, "alt-shift-h did not parse"); return
+        }
+        check(parsed.keyCode == 4, "h should be keycode 4, got \(parsed.keyCode)")
+        check(parsed.mods == UInt32(2048 | 512), "alt-shift mask wrong: \(parsed.mods)")
+        check((try? Keycodes.parse("CMD+Alt+K")) != nil, "separators and case should be flexible")
+        check((try? Keycodes.parse("alt-kc:36"))?.keyCode == 36, "raw keycode escape hatch broken")
+        check((try? Keycodes.parse("hyper-x")) == nil, "unknown modifier should fail")
+        check((try? Keycodes.parse("")) == nil, "empty spec should fail")
+
+        // `mod` is whatever the modifier is set to.
+        let ctrlAlt = UInt32(4096 | 2048)
+        check((try? Keycodes.parse("mod-shift-h", mod: ctrlAlt))?.mods == ctrlAlt | 512,
+              "mod should expand to the configured modifier")
+        check((try? Keycodes.parseModifiers("ctrl-alt")) == ctrlAlt, "ctrl-alt modifier parse")
+        check((try? Keycodes.parseModifiers("fn")) == nil, "fn alone cannot be the modifier")
+
+        // Writing a recorded combination back out, relative to the modifier.
+        check(Keycodes.spec(keyCode: 4, mods: ctrlAlt | 512, mod: ctrlAlt) == "mod-shift-h",
+              "spec should use mod: \(Keycodes.spec(keyCode: 4, mods: ctrlAlt | 512, mod: ctrlAlt))")
+        check(Keycodes.spec(keyCode: 36, mods: 256, mod: 2048) == "cmd-enter",
+              "spec without the modifier should spell it out")
+        for code: UInt32 in [0, 36, 44, 123, 96, 999] {
+            let spec = Keycodes.spec(keyCode: code, mods: 2048, mod: 2048)
+            check((try? Keycodes.parse(spec))?.keyCode == code, "spec '\(spec)' does not round-trip")
+        }
+    }
+
+    private static func shortcutTests() {
+        // Every default must parse, and no two may claim the same combination.
+        let defaults = Shortcuts()
+        check(defaults.resolved.count == Shortcuts.defaults.filter { $0.spec != nil }.count,
+              "a default shortcut does not parse")
+        let combos = defaults.resolved.map { "\($0.mods)-\($0.keyCode)" }
+        check(Set(combos).count == combos.count, "default shortcuts contain a duplicate combination")
+        check(defaults.modifier == 2048, "the default modifier should be alt")
+        check(defaults.text.split(separator: "\n").filter { !$0.hasPrefix("#") } == ["modifier = alt"],
+              "an untouched keymap should save as just the modifier:\n\(defaults.text)")
+
+        withTempConfig("""
+            # comment
+            modifier = ctrl-alt
+            focus left = mod-y
+            Float Toggle = none
+            exec open -na Ghostty = mod-shift-enter
+            reload; retile = mod-r
+            """) { path in
+            let s = try Shortcuts.load(path: path)
+            check(s.modifier == UInt32(4096 | 2048), "modifier parsed as \(s.modifier)")
+            func spec(_ name: String) -> String?? {
+                s.entries.first { $0.name.lowercased() == name }.map(\.spec)
+            }
+            check(spec("focus left") == .some("mod-y"), "rebind lost")
+            check(spec("float toggle") == .some(nil), "'none' should turn a default off (matched by command)")
+            check(spec("exec open -na ghostty") == .some("mod-shift-enter"), "exec shortcut lost")
+            check(s.entries.last?.commands == [.reload, .retile], "chained commands not parsed")
+            check(s.resolved.first { $0.name == "focus left" }?.mods == UInt32(4096 | 2048),
+                  "mod should resolve to ctrl-alt")
+
+            // Saving and loading again gives the same keymap.
+            try s.text.write(toFile: path, atomically: true, encoding: .utf8)
+            let again = try Shortcuts.load(path: path)
+            check(again.entries.map(\.spec) == s.entries.map(\.spec) && again.modifier == s.modifier,
+                  "shortcuts do not round-trip:\n\(s.text)")
+        }
+
+        withTempConfig("focus left = alt-nope\n") { path in
+            do {
+                _ = try Shortcuts.load(path: path)
+                check(false, "unknown key was accepted")
+            } catch let error as ConfigError {
+                check(error.description.contains(":1:") && error.description.contains("unknown key"),
+                      "wrong error: \(error.description)")
+            }
+        }
+        withTempConfig("teleport left = mod-h\n") { path in
+            do {
+                _ = try Shortcuts.load(path: path)
+                check(false, "unknown command was accepted")
+            } catch let error as ConfigError {
+                check(error.description.contains("unknown command"), "wrong error: \(error.description)")
+            }
+        }
     }
 
     // MARK: - Commands

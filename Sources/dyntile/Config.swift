@@ -19,8 +19,8 @@ struct Config {
     var verbose = false
     var floatBundleIDs: [String] = []
     var floatTitlePatterns: [NSRegularExpression] = []
-    /// `bind` lines left over from when dyntile had hotkeys. They are skipped rather than
-    /// rejected, so an old config still loads.
+    /// `bind` lines left over from older versions. Shortcuts now live in shortcuts.conf;
+    /// these are skipped rather than rejected, so an old config still loads.
     var ignoredBinds = 0
     var path: String?
 
