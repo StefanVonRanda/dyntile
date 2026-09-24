@@ -5,7 +5,7 @@
     <key>CFBundleName</key>            <string>dyntile</string>
     <key>CFBundleDisplayName</key>     <string>dyntile</string>
     <key>CFBundleExecutable</key>      <string>dyntile</string>
-    <key>CFBundleIdentifier</key>      <string>com.igzo.dyntile</string>
+    <key>CFBundleIdentifier</key>      <string>io.github.stefanvonranda.dyntile</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleIconFile</key>        <string>dyntile</string>
     <key>CFBundleShortVersionString</key> <string>@VERSION@</string>

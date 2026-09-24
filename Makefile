@@ -110,7 +110,7 @@ remove-signing-cert:
 # An ad-hoc signature changes on every rebuild, which leaves a stale Accessibility
 # entry that macOS will not match. This clears it so the prompt comes back clean.
 reset-permission:
-	tccutil reset Accessibility com.igzo.dyntile
+	tccutil reset Accessibility io.github.stefanvonranda.dyntile
 	@echo "now relaunch dyntile.app and accept the prompt"
 
 uninstall:
