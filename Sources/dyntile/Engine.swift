@@ -38,6 +38,8 @@ final class Engine {
     /// hit-tested against this rather than against live window frames, which move
     /// around under the cursor mid-drag.
     private var lastFrames: [WindowID: CGRect] = [:]
+    /// The desktop each tiled window was on in the last layout pass.
+    private var lastSpace: [WindowID: SpaceKey] = [:]
     /// True from mouse-down to mouse-up. Nothing is retiled while it is set: a layout
     /// pass during a drag is what makes the window fight the cursor.
     private var mouseDown = false
@@ -147,8 +149,15 @@ final class Engine {
     func retile() {
         guard tilingEnabled else { return }
         var frames: [WindowID: CGRect] = [:]
+        var spaces = visibleSpaces()
+        if adoptTabSlots(spaces) { spaces = visibleSpaces() }
+        defer {
+            lastSpace = Dictionary(uniqueKeysWithValues: spaces.flatMap { space in
+                space.windows.map { ($0, space.key) }
+            })
+        }
 
-        for (key, display, windows) in visibleSpaces() {
+        for (key, display, windows) in spaces {
             let st = state(key)
             guard st.layout.tiles, !windows.isEmpty else { continue }
             let params = LayoutParams(
@@ -180,6 +189,31 @@ final class Engine {
             // Monocle hides everything behind the focused window; keep it on top.
             if state(space.key).layout == .monocle { focused.element.raise() }
         }
+    }
+
+    /// A native macOS tab is a window of its own, and only the selected tab of a group is
+    /// on screen. Switching tabs hides one window and shows another from the same app on
+    /// the same desktop. Put the shown one directly before the hidden one in the order, so
+    /// the tab group keeps its tile instead of jumping to wherever the other tab was first
+    /// seen. Opening or closing a tab is the same swap and keeps the tile too.
+    /// Returns whether the order changed.
+    private func adoptTabSlots(_ spaces: [(key: SpaceKey, display: Display, windows: [WindowID])]) -> Bool {
+        let onScreen = wm.onScreenIDs()
+        var changed = false
+        for (key, _, windows) in spaces {
+            for id in windows where lastSpace[id] != key {
+                guard let pid = wm.windows[id]?.pid,
+                      let hidden = lastSpace.first(where: { old, space in
+                          space == key && !onScreen.contains(old)
+                              && wm.windows[old].map { $0.pid == pid && !$0.isMinimized } == true
+                      })?.key else { continue }
+                wm.move(id, before: hidden)
+                state(key).tree.leaf(for: hidden)?.window = id
+                lastSpace[hidden] = nil   // one successor per hidden tab
+                changed = true
+            }
+        }
+        return changed
     }
 
     /// Set the layout of the desktop the user is looking at. Unlike the `layout <name>`

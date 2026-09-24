@@ -294,6 +294,12 @@ final class WindowManager {
         order = order.map { set.contains($0) ? (iterator.next() ?? $0) : $0 }
     }
 
+    /// Move `id` to sit directly before `target` in the order.
+    func move(_ id: WindowID, before target: WindowID) {
+        order.removeAll { $0 == id }
+        order.insert(id, at: order.firstIndex(of: target) ?? order.endIndex)
+    }
+
     /// Apply frames without tripping the "user moved a window" detector.
     func apply(_ frames: [WindowID: CGRect]) {
         if dryRun {
