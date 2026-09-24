@@ -258,3 +258,7 @@ Nothing is retiled while the button is down, so neither gesture fights the curso
 
 - Fullscreen (green-button) windows are macOS's own Space; dyntile leaves them alone.
 - It cannot move a window between desktops, by design: that is Spaces' job.
+
+## License
+
+dyntile is licensed under the [European Union Public Licence v1.2](LICENSE) (EUPL-1.2).
